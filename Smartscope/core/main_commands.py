@@ -3,11 +3,14 @@ import os
 import json
 from django.db import transaction
 from django.core.cache import cache
+from django.conf import settings
 
 #These imports expose functions from other files to the smartscope.py script. Not ideal but that's how the CLI works for now.
 from Smartscope.core.test_commands import *
 from Smartscope.core.utils.training_data import add_to_training_set
 from Smartscope.core.export_optics import export_optics
+from Smartscope.utils.system_monitor import disk_space
+from Smartscope.core.utils.file_manipulations import read_file_line
 from .autoscreen import autoscreen, run_protocol_command
 
 import numpy as np
@@ -124,6 +127,47 @@ def check_pause(microscope_id: str, session_id: str):
     is_stop_file = os.path.isfile(os.path.join(os.getenv('TEMPDIR'), f'{session_id}.stop'))
 
     return dict(pause=pause, paused=paused, is_stop_file=is_stop_file)
+
+
+def session_full_state(session_id: str):
+    from Smartscope.core.models import ScreeningSession
+
+    obj = ScreeningSession.objects.get(pk=session_id)
+    process = obj.process_set.first()
+    state = {
+                'type': 'session_status', 
+                'status': None, 
+                'process_pid': None, 
+                'update_time': None, 
+                'replay': True
+            }
+    if process is not None:
+        last_update_time = process.end_time if process.end_time else process.start_time
+        state.update(
+            {'status': process.status, 
+             'process_pid': process.PID, 
+             'update_time': last_update_time.isoformat()
+            }
+        )
+
+    check_output = check_pause(obj.microscope_id.pk, session_id)
+    pause_status = 'signal_send' if check_output['paused'] else 'signal_received'
+    pause_setup = 'pause_set' if check_output['pause'] else 'pause_unset'
+    disk_status = disk_space(settings.AUTOSCREENDIR)
+
+    backlog = []
+    out = read_file_line(obj.directory, 'run.out', nline=100)
+    backlog.extend({'line': l, 'process_type': 'run_out'} for l in out)
+
+    proc = read_file_line(obj.directory, 'proc.out', nline=100)
+    backlog.extend({'line': l, 'process_type': 'proc_out'} for l in proc)
+    return {
+        'session_status': state,
+        'pause_status': {'type': 'pause_status', 'status': pause_status},
+        'pause_conf': {'type': 'pause_conf', 'status': pause_setup}, 
+        'session_logs': {'type': 'log_batch', 'lines': backlog},
+        'disk_status': {'type': 'disk_status', 'disk_usage': disk_status}
+        }
 
 
 def toggle_pause(microscope_id: str):

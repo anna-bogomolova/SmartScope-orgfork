@@ -30,6 +30,7 @@ from .db_manipulations import update, queue_atlas, add_targets
 from .selection.strategies import TARGET_SELECTION_STRATEGIES
 from .navigation import get_queue, get_target_priority, NAVIGATION_STRATEGIES, TargetPriority
 from .stats import count_completed
+from .utils.ws_channel_layer_msg import broadcast_session_status
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,7 @@ def run_grid(
                 paused = os.path.join(settings.TEMPDIR, f'paused_{microscope_id}')
                 open(paused, 'w').close()
                 update(grid, status=GridStatus.PAUSED)
+                broadcast_session_status(session_id, 'signal_send', 'pause')
                 logger.info('SerialEM is paused')
                 while os.path.isfile(paused):
                     sys.stdout.flush()
@@ -337,6 +339,7 @@ def clear_stop_file(session_id: str) -> bool:
 
 def check_stop_flag(session_id: str):
     if clear_stop_file(session_id):
+        broadcast_session_status(session_id, 'killed', 'update')
         raise KeyboardInterrupt()
 
 

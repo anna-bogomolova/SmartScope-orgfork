@@ -79,7 +79,8 @@
 </div>
 
 {% if session.microscope_id.isLocked and session.microscope_id.currentSession is not None %}
-<div class="d-flex align-items-center justify-content-center px-2">
+<div id="microscope-busy-alert" class="d-flex align-items-center justify-content-center px-2"
+    style="{% if not session.microscope_id.isLocked or session.microscope_id.currentSession is None %}display: none;{% endif %}">
     {% if session.microscope_id.currentSession.pk != session.session_id%}
     <div class='alert alert-warning p-2 m-2' role="alert">Microscope {{session.microscope_id}} is currently busy: <a
             class="alert-link" href="{% url 'run_session' session.microscope_id.currentSession.pk %}">View
@@ -166,9 +167,10 @@
                 <h5 class="mt-0 flex-fill">Main Output</h5>
                 <p class="flex-wrap ms-auto text-secondary mb-1 align-self-end" style="font-size: 0.85rem">Showing last 100 lines — download for full log</p>
             </div>
-            <textarea readonly id='out' class="form-control z-depth-1" rows="15">
+            <div id="run_out" class="form-control z-depth-1 log-viewer" 
+                style="height: 300px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;">
                 Fetching Logs...
-            </textarea>
+            </div>
         </div>
     </div>
     <div class="media">
@@ -177,9 +179,10 @@
                 <h5 class="mt-3 font-weight-bold blue-text">Processing Pipeline Output</h5>
                 <p class="flex-wrap ms-auto text-secondary mb-1 align-self-end" style="font-size: 0.85rem">Showing last 100 lines — download for full log</p>
             </div>
-            <textarea readonly id='proc' class="form-control z-depth-1" rows="15">
+            <div id="proc_out" class="form-control z-depth-1 log-viewer" 
+                style="height: 300px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;">
                 Fetching logs...
-            </textarea>
+        </div>
         </div>
     </div>
 </div>
