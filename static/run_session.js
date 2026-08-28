@@ -1,57 +1,38 @@
 const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value
-var interval = null
-var loc = window.location
-const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
 $(document).ready(async function () {
-    endpoint = `${protocol}://${loc.host}/websocket/session_id=${session_id}`
-    console.log(endpoint)
-    const socket = new WebSocket(endpoint);
+    const conn = createSessionSocket(session_id, {
+        onMessage: function (event) {
+            switch (event.type) {
+                case 'session_logs':
+                case 'log_batch':
+                    loadlogs(event);
+                    break;
+                case 'session_status':
+                    updateSessionStatus(event);
+                    isStopFile(event.status === 'killed');
+                    updateMicroscopeBusyAlert(event.status);
+                    break;
+                case 'pause_status':
+                    isPaused(event.status === 'signal_send');
+                    break;
+                case 'pause_conf':
+                    setPause({ pause: event.status === 'pause_set' });
+                    break;
+                case 'disk_status':
+                    systemDiskUpdate(event);
+                    break;
+                default:
+                    console.warn('Unhandled message type:', event.type, event);
+            }
+        },
+    });
 
-    socket.onopen = function () {
-        console.log('Session socket connected');
-    };
+    conn.connect();
 
-    socket.onmessage = function(e) {
-        const event = JSON.parse(e.data);
-        console.log('Receiving event:', event.type, event);
-
-        switch (event.type) {
-            case 'session_logs':
-            case 'log_batch':
-                loadlogs(event);
-                break;
-            case 'session_status':
-                updateSessionStatus(event);
-                const stopSignal = event.status === 'killed'
-                isStopFile(stopSignal);
-                updateMicroscopeBusyAlert(event.status, event.replay);
-                break;
-            case 'pause_status':
-                const pauseState = event.status === 'signal_send'
-                isPaused(pauseState);
-                break;
-            case 'pause_conf':
-                const pauseConf = {pause: event.status === 'pause_set'}
-                setPause(pauseConf);
-                break;
-            case 'disk_status':
-                systemDiskUpdate(event);
-                break;
-
-            default:
-                console.warn('Unhandled message type:', event.type, event);
-        }
-    }
-
-    socket.onclose = function (e) {
-        console.error('Session socket closed unexpectedly', e.code, e.reason);
-        // updateSessionStatus('disconnected');
-    };
-
-    socket.onerror = function (e) {
-        console.error('Session socket error', e);
-    };
+    window.addEventListener('beforeunload', function () {
+        conn.disconnect();
+    });
 });
 
 // start or stop the session
@@ -175,7 +156,7 @@ function appendLine(processType, line, isBacklog = false) {
     }
 }
 
-async function loadlogs(data) {
+function loadlogs(data) {
     if (data.type === 'session_logs') {
         // single live line
         appendLine(data.process_type, data.line, false);
@@ -204,6 +185,11 @@ async function loadlogs(data) {
 //checkIsRunning tracks staus of the session and changes the button from start to stop and vice versa
 function updateSessionStatus(event) {
     const element = document.getElementById('start-button');
+    if (!element) {
+        console.warn('start-button not found; skipping button state update');
+        updateSessionStatusPill(event); // still update the pill even if the button's missing
+        return;
+    }
     console.log('Session status received:', event.status)
 
     const isRunning = event.status === 'running';
@@ -273,7 +259,6 @@ function formatSessionDate(value) {
 }
 
 function updateMicroscopeBusyAlert(status) {
-    const TERMINAL_STATUSES = ['complete', 'error', 'finished', 'stopped'];
     const alertContainer = document.getElementById('microscope-busy-alert');
     if (!alertContainer) return;
 
