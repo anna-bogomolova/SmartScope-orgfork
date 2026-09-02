@@ -1,21 +1,31 @@
+import io
 import json
 import logging
+import tempfile
+import zipfile
+import shutil
 from zoneinfo import ZoneInfo
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 
 from django.shortcuts import render
 from django.db.models import Q, Prefetch, Avg, Max, Min, Count, Case, When, Value, CharField
 from django.http import HttpResponse
+from django.contrib.auth.decorators import login_required
+from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework import status
 
 from .serializers import SessionSerializer
 from Smartscope.core.models.screening_session import ScreeningSession
 from Smartscope.core.models.grid import AutoloaderGrid
 from Smartscope.core.settings import server_docker
+from Smartscope.core.main_commands import export_session
+from Smartscope.server.api.permissions import HasGroupPermission
 # from core.models import Product
 
 
@@ -28,6 +38,13 @@ FILTER_FIELD_MAP = {
     "user": "user__username",
 }
 
+
+class EmptySessionError(Exception):
+    """Session doesn't have valid grids exported."""
+    pass
+
+
+@login_required
 def table_view(request):
     return render(request, "management_table.html")
 
@@ -45,7 +62,7 @@ def utc_time_conversion(date: str,):
         
 
 class SessionsListView(APIView):
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         queryset = (ScreeningSession.objects
@@ -163,3 +180,82 @@ class SessionExportView(SessionsListView):
         response["Content-Disposition"] = 'attachment; filename="sessions_history.xlsx"'
         df.to_excel(response, index=False, engine="openpyxl")
         return response
+
+
+class SessionDetailExportView(APIView):
+    """
+    Exports a single session using the existing project export function.
+    """
+    permission_classes = [IsAuthenticated, HasGroupPermission]
+
+    def get(self, request, session_id, *args, **kwargs):
+        session = get_object_or_404(ScreeningSession, pk=session_id)
+        self.check_object_permissions(request, session) 
+        tmp_dir = tempfile.mkdtemp(prefix=f"session_{session.session_id}_export_")
+        try:
+            response = self.archive_session_data(
+                            session.session_id, 
+                            tmp_dir, 
+                            f"session_{session.date}_{session.session}"
+                        )
+            return response
+        except EmptySessionError:
+                    return Response(
+                                {"detail": "No files were generated for this session."},
+                                status=status.HTTP_404_NOT_FOUND,
+                            )
+        except Exception:
+            logger.exception(f"export_session raised while exporting session {session_id}")
+            return Response(
+                        {"detail": "Export failed while generating session files."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+    def archive_session_data(self, session_id, dir, name: str):
+        try:
+            export_session(session_id, export_to=dir)
+        except Exception as err:
+            logger.exception(f"export_session raised while exporting session {session_id} with error: {err}")
+            raise Exception(f"export_session raised while exporting session {session_id} with error") from err
+
+        tmp_path = Path(dir)
+        files = [p for p in tmp_path.rglob("*") if p.is_file()]
+        if not files:
+            logger.warning(f"export_session produced no files for session {session_id}")
+            raise EmptySessionError()
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.write(f, arcname=f.relative_to(tmp_path))
+        buffer.seek(0)
+
+        response = HttpResponse(buffer.read(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{name}.zip"'
+        return response
+
+
+
+class SessionDeleteView(APIView):
+    """
+    Deletes a single ScreeningSession: removes associated files on disk,
+    then deletes the DB records. Restricted to the session's owner or staff.
+    """
+    permission_classes = [IsAuthenticated, HasGroupPermission]
+
+    def delete(self, request, session_id, *args, **kwargs):
+        session = get_object_or_404(ScreeningSession, pk=session_id)
+        self.check_object_permissions(request, session)
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+        
+
+    def _delete_session_files(self, session):
+        session_dir = Path(session.directory)
+        if session_dir.exists():
+            shutil.rmtree(session_dir)
+        else:
+            logger.warning(f"Session directory not found, skipping file removal: {session_dir}")

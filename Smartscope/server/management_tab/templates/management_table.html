@@ -11,9 +11,34 @@
         </div>
         <div id="data-grid" style="flex: 1; width: 100%; min-height: 0;" class="ag-theme-balham"></div>
     </div>
+    <!-- Delete confirmation modal -->
+    <div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete session</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to delete <strong id="deleteSessionLabel"></strong>? This cannot be undone.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock content %}
 
 {% block script %}
+<script>
+    window.LOGIN_URL = "{% url 'login' %}";
+    window.CURRENT_USER = {
+        id: {{ request.user.id }},
+        isStaff: {{ request.user.is_staff|yesno:"true,false" }}
+    };
+</script>
 <script type="text/javascript" charset="utf-8">
     (function() {
         // formats "2024-01-15T10:30:00Z" to "2024-01-15 10:30"
@@ -30,6 +55,123 @@
         var url = `/smartscope/browse/?group=${data.group_id}&session_id=${data.session_id}&grid_id=${data.grid_id}`;
         return `<a href="${url}" target="_blank">${params.value}</a>`;
     }
+
+    // renders download + delete icon buttons for a row
+    function actionsRenderer(params) {
+        var container = document.createElement("span");
+        container.className = "d-flex justify-content-center row-actions";
+
+        var downloadBtn = document.createElement("button");
+        downloadBtn.className = "btn btn-link row-action-btn";
+        downloadBtn.title = "Download session";
+        downloadBtn.setAttribute("data-bs-toggle", "tooltip");
+        downloadBtn.innerHTML = '<i class="bi bi-download"></i>';
+        downloadBtn.addEventListener("click", () => downloadSession(params.data));
+        container.appendChild(downloadBtn);
+
+        var canDelete = window.CURRENT_USER.isStaff || params.data.user_id === window.CURRENT_USER.id;
+        if (canDelete) {
+            var deleteBtn = document.createElement("button");
+            deleteBtn.className = "btn btn-link row-action-btn row-action-btn-danger";
+            deleteBtn.title = "Delete session";
+            downloadBtn.setAttribute("data-bs-toggle", "tooltip");
+            deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+            deleteBtn.addEventListener("click", () => openDeleteModal(params.data));
+            container.appendChild(deleteBtn);
+        }
+        // Bootstrap tooltips need explicit init per element
+        container.querySelectorAll(".row-action-btn").forEach((el) => {
+            new bootstrap.Tooltip(el);
+        });
+
+        return container;
+    }
+
+    function getCsrfToken() {
+        var name = "csrftoken";
+        var cookies = document.cookie.split(";");
+        for (var c of cookies) {
+            c = c.trim();
+            if (c.startsWith(name + "=")) {
+                return decodeURIComponent(c.substring(name.length + 1));
+            }
+        }
+        return "";
+    }
+
+    // Throws on 401/403 after redirecting to login; otherwise returns the response.
+    async function checkAuth(response) {
+        if (response.status === 401 || response.status === 403) {
+            window.location.href = `${window.LOGIN_URL}?next=${encodeURIComponent(window.location.pathname)}`;
+            throw new Error("unauthorized");
+        }
+        return response;
+    }
+
+    function extractFilename(response, fallback) {
+        var header = response.headers.get("Content-Disposition") || "";
+        var match = header.match(/filename="?([^"]+)"?/);
+        return match ? match[1] : fallback;
+    }
+
+    async function downloadSession(rowData) {
+        try {
+            var response = await fetch(`/sessions_history/sessions/${rowData.session_id}/export/`);
+            await checkAuth(response);
+            if (!response.ok) {
+                var errBody = await response.json().catch(() => null);
+                throw new Error(errBody && errBody.detail ? errBody.detail : "Export failed");
+            }
+
+            var blob = await response.blob();
+            var objectUrl = window.URL.createObjectURL(blob);
+            var link = document.createElement("a");
+            link.href = objectUrl;
+            link.download = extractFilename(response, `${rowData.session_label || rowData.session_id}.zip`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(objectUrl);
+        } catch (err) {
+            if (err.message !== "unauthorized") {
+                alert(err.message || "Could not download this session. Please try again.");
+            }
+        }
+    }
+
+    var pendingDeleteRow = null;
+    var deleteModalEl = document.getElementById("deleteConfirmModal");
+    var deleteModal = new bootstrap.Modal(deleteModalEl);
+
+    function openDeleteModal(rowData) {
+        pendingDeleteRow = rowData;
+        document.getElementById("deleteSessionLabel").textContent = rowData.session_label || `Session ${rowData.session_id}`;
+        deleteModal.show();
+    }
+
+    async function confirmDelete() {
+        if (!pendingDeleteRow) return;
+        var rowData = pendingDeleteRow;
+        pendingDeleteRow = null;
+
+        try {
+            var response = await fetch(`/sessions_history/sessions/${rowData.session_id}/delete/`, {
+                method: "DELETE",
+                headers: { "X-CSRFToken": getCsrfToken() },
+            });
+            await checkAuth(response);
+            if (!response.ok) throw new Error("Delete failed");
+
+            deleteModal.hide();
+            window.location.reload();
+        } catch (err) {
+            if (err.message !== "unauthorized") {
+                alert("Could not delete this session. Please try again.");
+            }
+        }
+    }
+
+    document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDelete);
 
     var textFilter = {
         suppressAndOrCondition: true,
@@ -57,6 +199,7 @@
         {headerName: "#Grids", field: "grid_count", filter: "agNumberColumnFilter", filterParams: numberFilter},
         {headerName: "#Grids.Good", field: "grid_good", filter: "agNumberColumnFilter", filterParams: numberFilter},
         {headerName: "#Grids.Bad", field: "grid_bad", filter: "agNumberColumnFilter", filterParams: numberFilter},
+        {headerName: "Actions", field: "actions", filter: false, sortable: false, cellRenderer: actionsRenderer, width: 150},
     ];
 
     var gridOptions = {
@@ -64,25 +207,25 @@
         defaultColDef: {
             filterParams: {suppressAndOrCondition: true, filterOptions: ["contains"]},
             resizable: true,
-            enableCellTextSelection: true,  // allows copying text from cells
+            // enableCellTextSelection: true,  // allows copying text from cells
         },
         enableCellTextSelection: true,  // allows copying text from cells
         rowModelType: "infinite",
         cacheBlockSize: 100,
         maxBlocksInCache: 10,
         datasource: {
-            getRows: function(params) {
-                var filtering = encodeURIComponent(JSON.stringify(params.filterModel));
-                var sorting = encodeURIComponent(JSON.stringify(params.sortModel));
-                var url = `/sessions_history/sessions/?startRow=${params.startRow}&endRow=${params.endRow}&filter=${filtering}&sort=${sorting}`;
-                fetch(url)
-                    .then((response) => response.json())
-                    .then((data) => {
-                        params.successCallback(data.rows, data.totalRows);
-                    })
-                    .catch(() => {
-                        params.failCallback();
-                    });
+            getRows: async function(params) {
+                try {
+                    var filtering = encodeURIComponent(JSON.stringify(params.filterModel));
+                    var sorting = encodeURIComponent(JSON.stringify(params.sortModel));
+                    var url = `/sessions_history/sessions/?startRow=${params.startRow}&endRow=${params.endRow}&filter=${filtering}&sort=${sorting}`;
+                    var response = await fetch(url);
+                    await checkAuth(response);
+                    var data = await response.json();
+                    params.successCallback(data.rows, data.totalRows);
+                } catch (err) {
+                    params.failCallback();
+                }
             }
         }
     };
@@ -140,6 +283,32 @@
     .btn-link.text-secondary:focus {
         background-color: rgba(0, 0, 0, 0.15);
         color: #212529;
+    }
+    .row-actions {
+        padding: 1px 0 0 0;
+        gap: 0.35rem;
+        align-items: center;
+        height: 100%;
+    }
+    .row-action-btn {
+        text-decoration: none;
+        background-color: rgba(0, 0, 0, 0.04);
+        padding: 0.2rem 0.45rem;
+        transition: background-color 0.15s ease-in-out;
+        font-size: 1rem;
+        line-height: 1;
+        color: #495057c4;
+        border: none;
+    }
+    .row-action-btn:hover,
+    .row-action-btn:focus {
+        background-color: rgba(133, 150, 236, 0.326);
+        color: #104d8a;
+    }
+    .row-action-btn-danger:hover,
+    .row-action-btn-danger:focus {
+        background-color: rgba(176, 42, 55, 0.15);
+        color: #97133b;
     }
 </style>
 {% endblock script %}
