@@ -44,6 +44,36 @@ class EmptySessionError(Exception):
     pass
 
 
+def _build_session_zip(session_id, tmp_dir):
+    """
+    Runs export_session into tmp_dir, then zips its contents into an
+    in-memory buffer. Returns the buffer (positioned at 0).
+
+    Raises:
+        EmptySessionError: export_session completed but produced no files.
+        Exception: export_session itself raised (re-raised with context).
+    """
+    try:
+        export_session(session_id, export_to=tmp_dir)
+    except Exception as err:
+        raise Exception(
+            f"export_session raised while exporting session {session_id} with error"
+        ) from err
+
+    tmp_path = Path(tmp_dir)
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+    if not files:
+        logger.warning(f"export_session produced no files for session {session_id}")
+        raise EmptySessionError()
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            zf.write(f, arcname=f.relative_to(tmp_path))
+    buffer.seek(0)
+    return buffer
+
+
 @login_required
 def table_view(request):
     return render(request, "management_table.html")
@@ -193,11 +223,12 @@ class SessionDetailExportView(APIView):
         self.check_object_permissions(request, session) 
         tmp_dir = tempfile.mkdtemp(prefix=f"session_{session.session_id}_export_")
         try:
-            response = self.archive_session_data(
+            zip_name = f"session_{session.date}_{session.session}"
+            zip_buffer = _build_session_zip(
                             session.session_id, 
-                            tmp_dir, 
-                            f"session_{session.date}_{session.session}"
-                        )
+                            tmp_dir)
+            response = HttpResponse(zip_buffer.read(), content_type="application/zip")
+            response["Content-Disposition"] = f'attachment; filename="{zip_name}.zip"'
             return response
         except EmptySessionError:
                     return Response(
@@ -214,31 +245,6 @@ class SessionDetailExportView(APIView):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-    def archive_session_data(self, session_id, dir, name: str):
-        try:
-            export_session(session_id, export_to=dir)
-        except Exception as err:
-            logger.exception(f"export_session raised while exporting session {session_id} with error: {err}")
-            raise Exception(f"export_session raised while exporting session {session_id} with error") from err
-
-        tmp_path = Path(dir)
-        files = [p for p in tmp_path.rglob("*") if p.is_file()]
-        if not files:
-            logger.warning(f"export_session produced no files for session {session_id}")
-            raise EmptySessionError()
-
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in files:
-                zf.write(f, arcname=f.relative_to(tmp_path))
-        buffer.seek(0)
-
-        response = HttpResponse(buffer.read(), content_type="application/zip")
-        response["Content-Disposition"] = f'attachment; filename="{name}.zip"'
-        return response
-
-
-
 class SessionDeleteView(APIView):
     """
     Deletes a single ScreeningSession: removes associated files on disk,
@@ -249,6 +255,8 @@ class SessionDeleteView(APIView):
     def delete(self, request, session_id, *args, **kwargs):
         session = get_object_or_404(ScreeningSession, pk=session_id)
         self.check_object_permissions(request, session)
+
+        self._backup_session_before_delete(session)
         session.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
         
@@ -259,3 +267,32 @@ class SessionDeleteView(APIView):
             shutil.rmtree(session_dir)
         else:
             logger.warning(f"Session directory not found, skipping file removal: {session_dir}")
+
+    def _backup_session_before_delete(self, session):
+        """
+        Best-effort backup: writes a zip of the session's exported data into
+        settings.SESSION_BACKUP_DIR before deletion. Failures are logged, not
+        raised — deletion proceeds regardless, per policy.
+        """
+        backup_root = server_docker.SESSION_BACKUP_DIR
+        tmp_dir = tempfile.mkdtemp(prefix=f"session_{session.session_id}_backup_")
+        try:
+            buffer = _build_session_zip(session.session_id, tmp_dir)
+            backup_root.mkdir(parents=True, exist_ok=True)
+            name = f"session_{session.date}_{session.session}.zip"
+            backup_path = backup_root / name
+            with open(backup_path, "wb") as f:
+                f.write(buffer.read())
+            logger.info(f"Backed up session {session.pk} to {backup_path}")
+        except EmptySessionError:
+            logger.warning(
+                f"Session {session.pk} produced no files during pre-delete backup; "
+                "proceeding with deletion without a backup archive."
+            )
+        except Exception:
+            logger.exception(
+                f"Failed to back up session {session.pk} before deletion; "
+                "proceeding with deletion anyway per policy."
+            )
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)

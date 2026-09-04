@@ -15,16 +15,16 @@
     <div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-header">
+                <div class="modal-header py-2">
                     <h5 class="modal-title">Delete session</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     Are you sure you want to delete <strong id="deleteSessionLabel"></strong>? This cannot be undone.
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-danger" id="confirmDeleteBtn">Delete</button>
                 </div>
             </div>
         </div>
@@ -69,7 +69,7 @@
         downloadBtn.addEventListener("click", () => downloadSession(params.data));
         container.appendChild(downloadBtn);
 
-        var canDelete = window.CURRENT_USER.isStaff || params.data.user_id === window.CURRENT_USER.id;
+        var canDelete = window.CURRENT_USER.isStaff || params.data.user === window.CURRENT_USER.id;
         if (canDelete) {
             var deleteBtn = document.createElement("button");
             deleteBtn.className = "btn btn-link row-action-btn row-action-btn-danger";
@@ -189,7 +189,7 @@
     };
 
     var columnDefs = [
-        {headerName: "Session", field: "session_label", filter: "agTextColumnFilter", cellRenderer: sessionLinkRenderer},
+        {headerName: "Session", field: "session_label", filter: "agTextColumnFilter", cellRenderer: sessionLinkRenderer, checkboxSelection: true},
         {headerName: "Group", field: "group", filter: "agTextColumnFilter", filterParams: textFilter},
         {headerName: "StartTime", field: "creation_time", filter: "agTextColumnFilter", valueFormatter: formatDate, filterParams: dateFilter},
         {headerName: "EndTime", field: "last_update", filter: "agTextColumnFilter", valueFormatter: formatDate, filterParams: dateFilter},
