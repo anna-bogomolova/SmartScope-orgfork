@@ -290,6 +290,8 @@ async function loadReport(requestfield = null, id = null, push = true) {
     var url = `/api/report/?grid_id=${id}`
     console.log(url)
     var report = await fetchAsync(url,message=`Loading report for grid ${id}`)
+    var isNotFound = typeof report === 'string' && report.indexOf('data-report-not-found') !== -1;
+
     console.log('Previous grid:', currentState.grid_id)
     if (currentState.grid_id && currentState.grid_id != id) {
         console.log('Resetting hole and square state')
@@ -308,6 +310,10 @@ async function loadReport(requestfield = null, id = null, push = true) {
         selected()
     }
     $(`#main`).html(report)
+    if (isNotFound) {
+        return;
+    }
+    
     if (typeof csrftoken == 'undefined') {
         console.log('loading script', reportscript, typeof csrftoken)
         $.getScript(reportscript);
@@ -323,5 +329,8 @@ async function loadReport(requestfield = null, id = null, push = true) {
     console.trace('htmx.process called here')
     htmx.process(htmx.find('#main'))
 }
+
+// placeholder for no executed function
+function noop() {}
 
 

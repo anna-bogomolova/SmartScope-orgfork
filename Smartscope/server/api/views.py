@@ -57,6 +57,18 @@ logger = logging.getLogger(__name__)
 #     filterset_fields = ['grid_id', 'grid_id__meshMaterial', 'grid_id__holeType', 'grid_id__meshSize', 'grid_id__quality',
 #                         'atlas_id', 'quality', ]
 
+
+class SidepanelErrorItem:
+    """Placeholder item rendered when a group/session no longer exists."""
+    def __init__(self, message):
+        self.pk = ""
+        self.quality = None
+        self.message = message.upper()
+
+    def __str__(self):
+        return self.message
+    
+
 class AlternateLoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -173,7 +185,17 @@ class SidePanel(APIView):
         field = None
 
         if group is not None and (user.is_staff or user.groups.filter(pk=group).exists()):
-            group_obj = Group.objects.get(pk=group)
+
+            try:
+                group_obj = Group.objects.get(pk=group)
+            except Group.DoesNotExist:
+                return Response(dict(
+                    items=[SidepanelErrorItem("Elements not found")],
+                    nextsection=None,
+                    field="error",
+                    jsfunction="noop",
+                ))
+            
             if own_flag:
                 sessions = ScreeningSession.objects.filter(user=user.username, group=group_obj)
             else:
@@ -196,7 +218,17 @@ class SidePanel(APIView):
             field = 'session_id'
 
         if session is not None:
-            session_obj = ScreeningSession.objects.get(pk=session)
+
+            try:
+                session_obj = ScreeningSession.objects.get(pk=session)
+            except ScreeningSession.DoesNotExist:
+                return Response(dict(
+                    items=[SidepanelErrorItem("Elements not found")],
+                    nextsection=None,
+                    field="error",
+                    jsfunction="noop",
+                ))
+            
             if user.is_staff or user.groups.filter(name=session_obj.group).exists():
                 grids = AutoloaderGrid.objects.filter(session_id=session_obj)
                 st = request.query_params.getlist('sample_type_tag')
@@ -238,13 +270,24 @@ class ReportPanel(APIView):
     def get(self, request):
         # smartscopeServerLog.info(request.query_params)
         grid_id = request.query_params.get('grid_id')
-        grid = AutoloaderGrid.objects.get(grid_id=grid_id)
+        try:
+            grid = AutoloaderGrid.objects.get(grid_id=grid_id)
+        except:
+            return Response(
+                {"not_found": True, "message": "This grid no longer exists."},
+                template_name='report_not_found.html',
+            )
         user = request.user
         user_groups = list(user.groups.values_list('pk', flat=True))
         group = grid.session_id.group
         logger.debug(f"Group={group.pk}, {user_groups}")
 
-        if user.is_staff or group.pk in user_groups:
+        if not os.path.isdir(grid.directory):
+            return Response(
+                            {"not_found": True, "message": "No data for this grid exists."},
+                            template_name='report_not_found.html',
+                        )
+        elif user.is_staff or group.pk in user_groups:
             context = dict()
             context['grid'] = grid
             context['tagsFeatureFlag'] = settings.TAGS_FEATURE_FLAG
@@ -261,7 +304,10 @@ class ReportPanel(APIView):
 
             return Response(context, content_type='html')
         else:
-            return HttpResponse(f'Sorry, {user} is not allowed to view this content.')
+            return Response(
+                            {"not_found": True, "message": f'Sorry, {user} is not allowed to view this content.'},
+                            template_name='report_not_found.html',
+                        )
 
 class PluginView(APIView):
     permission_classes = [permissions.IsAuthenticated]
