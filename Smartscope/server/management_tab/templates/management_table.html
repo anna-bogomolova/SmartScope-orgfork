@@ -3,11 +3,24 @@
 {% block title %}Smartscope Sessions{% endblock %}
 {% block content %}
     <div id="container" class="d-flex flex-column p-2" style="width: 100%; height: 100%; display: flex; flex-direction: column; background-color: #f5f5f5;">
-        <div class="d-inline-flex justify-content-between pt-2 pb-0">
+        <div class="d-inline-flex justify-content-between align-items-center pt-2 pb-0">
             <h2 class="flex-grow-1">Sessions History</h2>
-            <a id="export-excel-link" class="a btn btn-link text-secondary border-0 align-self-center" href="{% url 'export_excel' %}" role="button" aria-haspopup="true">
-                <i class="bi bi-download"></i>
-            </a>
+            {% if user.is_staff %}
+            <div class="d-flex flex-row align-items-center gap-2">
+                <a id="export-excel-link" class="a btn btn-link text-secondary border-0 align-self-center" href="{% url 'export_excel' %}" role="button" aria-haspopup="true">
+                    <i class="bi bi-download"></i>
+                </a>
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-primary dropdown-toggle" type="button" id="sessHistoryAction" data-bs-toggle="dropdown" aria-expanded="false">
+                        Actions
+                    </button>
+                    <ul class="dropdown-menu" aria-labelledby="sessHistoryAction">
+                        <li><a id="bulkDeleteAction" class="dropdown-item" href="#">Delete Sessions</a></li>
+                        <li><a id="bulkUnselectAction" class="dropdown-item" href="#">Unselect All</a></li>
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
         </div>
         <div id="data-grid" style="flex: 1; width: 100%; min-height: 0;" class="ag-theme-balham"></div>
     </div>
@@ -143,35 +156,92 @@
     var deleteModalEl = document.getElementById("deleteConfirmModal");
     var deleteModal = new bootstrap.Modal(deleteModalEl);
 
-    function openDeleteModal(rowData) {
-        pendingDeleteRow = rowData;
-        document.getElementById("deleteSessionLabel").textContent = rowData.session_label || `Session ${rowData.session_id}`;
+    function openDeleteModal(rows) {
+        if (!Array.isArray(rows)) rows = [rows];
+        pendingDeleteRows = rows;
+
+        if (rows.length === 1) {
+            document.getElementById("deleteSessionLabel").textContent = rows[0].session_label || `Session ${rows[0].session_id}`;
+        } else {
+            document.getElementById("deleteSessionLabel").textContent = `${rows.length} selected session(s)`;
+        }
         deleteModal.show();
     }
 
-    async function confirmDelete() {
-        if (!pendingDeleteRow) return;
-        var rowData = pendingDeleteRow;
-        pendingDeleteRow = null;
-
-        try {
-            var response = await fetch(`/sessions_history/sessions/${rowData.session_id}/delete/`, {
-                method: "DELETE",
-                headers: { "X-CSRFToken": getCsrfToken() },
-            });
-            await checkAuth(response);
-            if (!response.ok) throw new Error("Delete failed");
-
-            deleteModal.hide();
-            window.location.reload();
-        } catch (err) {
-            if (err.message !== "unauthorized") {
-                alert("Could not delete this session. Please try again.");
-            }
-        }
+    async function deleteOneSession(rowData) {
+        var response = await fetch(`/sessions_history/sessions/${rowData.session_id}/delete/`, {
+            method: "DELETE",
+            headers: { "X-CSRFToken": getCsrfToken() },
+        });
+        await checkAuth(response);
+        return { rowData: rowData, ok: response.ok };
     }
 
+    async function confirmDelete() {
+        if (!pendingDeleteRows || pendingDeleteRows.length === 0) return;
+        var rows = pendingDeleteRows;
+        pendingDeleteRows = null;
+
+        var deletedCount = 0;
+        var stoppedEarly = false;
+        var failedRow = null;
+
+        try {
+            for (var i = 0; i < rows.length; i++) {
+                var res = await deleteOneSession(rows[i]);
+                if (!res.ok) {
+                    failedRow = res.rowData;
+                    stoppedEarly = true;
+                    break;
+                }
+                deletedCount++;
+            }
+        } catch (err) {
+            if (err.message === "unauthorized") return;
+            alert(
+                rows.length === 1
+                    ? "Could not delete this session. Please try again."
+                    : "Bulk delete failed unexpectedly. Please refresh and check which sessions remain."
+            );
+            if (deletedCount > 0) window.location.reload();
+            return;
+        }
+
+        deleteModal.hide();
+
+        if (stoppedEarly) {
+            var label = failedRow.session_label || failedRow.session_id;
+            if (rows.length === 1) {
+                alert("Could not delete this session. Please try again.");
+            } else {
+                alert(
+                    `Deleted ${deletedCount} of ${rows.length} sessions before an error occurred on "${label}". ` +
+                    `Remaining sessions were not deleted.`
+                );
+            }
+        }
+
+        window.location.reload();
+    }
+
+    document.getElementById("bulkDeleteAction").addEventListener("click", (e) => {
+        e.preventDefault();
+        var selected = gridApi.getSelectedRows();
+        if (selected.length === 0) {
+            alert("No sessions selected.");
+            return;
+        }
+        openDeleteModal(selected);
+    });
+
+
     document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDelete);
+
+    document.getElementById("bulkUnselectAction").addEventListener("click", (e) => {
+        e.preventDefault();
+        gridApi.deselectAll();
+    });
+
 
     var textFilter = {
         suppressAndOrCondition: true,
@@ -209,6 +279,7 @@
             resizable: true,
             // enableCellTextSelection: true,  // allows copying text from cells
         },
+        rowSelection: "multiple",
         enableCellTextSelection: true,  // allows copying text from cells
         rowModelType: "infinite",
         cacheBlockSize: 100,
