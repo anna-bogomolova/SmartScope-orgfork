@@ -9,6 +9,7 @@ from Smartscope.lib.converters import rgetattr
 logger = logging.getLogger(__name__)
 
 def load_protocol(file:Path):
+    logger.debug(f'{file} requested for Protocol')
     if file.exists():
         with open(file) as f:
             data = yaml.safe_load(f)
