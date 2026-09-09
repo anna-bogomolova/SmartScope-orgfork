@@ -78,19 +78,20 @@
         take a few minutes. </div>
 </div>
 
-{% if session.microscope_id.isLocked and session.microscope_id.currentSession is not None %}
-<div id="microscope-busy-alert" class="d-flex align-items-center justify-content-center px-2"
-    style="{% if not session.microscope_id.isLocked or session.microscope_id.currentSession is None %}display: none;{% endif %}">
-    {% if session.microscope_id.currentSession.pk != session.session_id%}
-    <div class='alert alert-warning p-2 m-2' role="alert">Microscope {{session.microscope_id}} is currently busy: <a
-            class="alert-link" href="{% url 'run_session' session.microscope_id.currentSession.pk %}">View
-            current session</a></div>
-    {% else %}
-    <div class='alert alert-warning p-2 m-2' role="alert">Microscope {{session.microscope_id}} is currently busy running this session.
+{% if session.microscope_id.isLocked and session.microscope_id.currentSession is not None and session.microscope_id.currentSession.pk != session.session_id %}
+<div class="d-flex align-items-center justify-content-center px-2">
+    <div class='alert alert-warning p-2 m-2' role="alert">
+        Microscope {{ session.microscope_id }} is currently busy:
+        <a class="alert-link" href="{% url 'run_session' session.microscope_id.currentSession.pk %}">View current session</a>
     </div>
-    {% endif %}
 </div>
 {% endif %}
+
+<div id="microscope-busy-alert" class="d-flex align-items-center justify-content-center px-2" style="display: none;">
+    <div class='alert alert-warning p-2 m-2' role="alert">
+        Microscope {{ session.microscope_id }} is currently busy running this session.
+    </div>
+</div>
 
 <!-- Session toggle with start annd stop button. Start button changes to stop and vice versa-->
 <div class="d-flex align-items-end justify-content-between gap-2 flex-wrap m-0 mb-2 px-2">

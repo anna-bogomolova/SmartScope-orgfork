@@ -121,6 +121,7 @@ function isStopFile(data) {
 }
 
 function isPaused(paused) {
+    console.log('Pause message was received')
     paused_div = document.getElementById('paused')
     if (paused === true) {
         paused_div.classList.remove('hidden')
@@ -261,11 +262,14 @@ function formatSessionDate(value) {
 function updateMicroscopeBusyAlert(status) {
     const alertContainer = document.getElementById('microscope-busy-alert');
     if (!alertContainer) return;
+    console.log("Banner update after new status received", status, TERMINAL_STATUSES.includes(status))
 
     if (TERMINAL_STATUSES.includes(status)) {
-        alertContainer.style.display = 'none';
+        alertContainer.classList.add('d-none');
+        alertContainer.classList.remove('d-flex');
     } else {
-        alertContainer.style.display = '';
+        alertContainer.classList.remove('d-none');
+        alertContainer.classList.add('d-flex');
     }
 }
 
