@@ -183,8 +183,8 @@ class GridCollectionParamsForm(forms.ModelForm):
         help_texts = dict(
             atlas_x='Number of tiles in X for the Atlas',
             atlas_y='Number of tiles in Y for the Atlas',
-            squares_num='Number of squares to pick',
-            holes_per_square='Number of holes per square, Use 0 to select all.',
+            squares_num='Number of squares to pick. Use -1 to select all, 0 for none.',
+            holes_per_square='Number of holes per square. Use -1 to select all, 0 for none.',
             bis_max_distance='Max image-shift distance in microns. 0 to disable image-shift.',
             min_bis_group_size='Smaller group size for image-shift. Will be considered is distance is not 0',
             afis='Use astigmatism and beam-tilt compensation during beam-image shift. **Coma vs Image-shift calibration must be performed to use this option**',
@@ -226,10 +226,10 @@ class GridCollectionParamsForm(forms.ModelForm):
             "step": 0.1
         })
         self.fields['squares_num'].widget.attrs.update({
-            "min": 0,
+            "min": -1,
         })
         self.fields['holes_per_square'].widget.attrs.update({
-            "min": 0,
+            "min": -1,
         })
         self.fields['atlas_x'].widget.attrs.update({
             "min": 1,
@@ -252,6 +252,18 @@ class GridCollectionParamsForm(forms.ModelForm):
             else:    
                 visible.field.widget.attrs['class'] = 'form-control'
             visible.field.required = False
+
+    def _clean_n_targets(self, field):
+        value = self.cleaned_data.get(field)
+        if value is not None and value < -1:
+            raise forms.ValidationError('Use -1 to select all, 0 for none, or a positive number.')
+        return value
+
+    def clean_squares_num(self):
+        return self._clean_n_targets('squares_num')
+
+    def clean_holes_per_square(self):
+        return self._clean_n_targets('holes_per_square')
 
 
 class PreprocessingPipelineIDForm(forms.Form):

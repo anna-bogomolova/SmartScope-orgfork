@@ -579,7 +579,7 @@ class AutoloaderGrid(BaseModel):
 
     @ property
     def collection_mode(self):
-        if self.params_id.holes_per_square <= 0:
+        if self.params_id.holes_per_square < 0:
             return 'collection'
         return 'screening'
 

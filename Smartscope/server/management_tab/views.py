@@ -107,7 +107,7 @@ class SessionsListView(APIView):
                         grid_bad=Count("autoloadergrid__quality", filter=Q(autoloadergrid__quality='bad'))
                     ).annotate(
                         session_type=Case(
-                            When(avg_holes_per_square=0, then=Value('collection')),
+                            When(avg_holes_per_square=-1, then=Value('collection')),
                             When(avg_holes_per_square__isnull=True, then=Value('unknown')),
                             default=Value('screening'),
                             output_field=CharField()
